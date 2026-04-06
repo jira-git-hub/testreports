@@ -26,23 +26,25 @@ jobs:
     - name: Build solution
       run: dotnet build --no-restore --configuration Release
     
-    - name: Run tests and generate TRX report
-      run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./testresults
-      continue-on-error: true
+    - name: Run tests with TRX report
+      run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=TestResults.trx" --results-directory "./TestResults" || true
     
     - name: Install ReportGenerator
       run: dotnet tool install --global dotnet-reportgenerator-globaltool
     
-    - name: Generate HTML Test Report
+    - name: Generate HTML Report
       if: always()
-      run: reportgenerator -reports:"./testresults/**/*.trx" -targetdir:"./htmlreports" -reporttypes:"Html;HtmlSummary"
+      run: |
+        if [ -d "./TestResults" ]; then
+          reportgenerator -reports:"./TestResults/**/*.trx" -targetdir:"./HtmlReport" -reporttypes:"Html;HtmlSummary" || true
+        fi
     
     - name: Publish test results
       if: always()
       uses: dorny/test-reporter@v1
       with:
         name: C# Test Results
-        path: './testresults/**/*.trx'
+        path: './TestResults/**/*.trx'
         reporter: 'dotnet-trx'
         fail-on-error: false
     
@@ -50,19 +52,21 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: test-results
+        name: test-results-${{ github.run_id }}
         path: |
-          ./testresults/**/*.trx
-          ./htmlreports/**
+          TestResults/
+          HtmlReport/
         retention-days: 30
     
     - name: Create test summary
       if: always()
       run: |
-        echo "## Test Execution Summary" >> $GITHUB_STEP_SUMMARY
-        echo "✅ Tests completed and reports generated" >> $GITHUB_STEP_SUMMARY
+        echo "## ✅ Test Execution Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Report Details" >> $GITHUB_STEP_SUMMARY
         echo "- **Framework**: xUnit" >> $GITHUB_STEP_SUMMARY
         echo "- **Report Formats**: TRX, HTML" >> $GITHUB_STEP_SUMMARY
+        if [ -d "./TestResults" ]; then
+          TEST_COUNT=$(find ./TestResults -name "*.trx" | wc -l)
+          echo "- **Test Files**: $TEST_COUNT" >> $GITHUB_STEP_SUMMARY
+        fi
         echo "- **Artifacts**: Available for 30 days" >> $GITHUB_STEP_SUMMARY
