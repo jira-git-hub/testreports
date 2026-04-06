@@ -30,36 +30,39 @@ jobs:
       run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./testresults
       continue-on-error: true
     
-    - name: Convert TRX to JUnit XML
+    - name: Install ReportGenerator
+      run: dotnet tool install --global dotnet-reportgenerator-globaltool
+    
+    - name: Generate HTML Test Report
       if: always()
-      uses: gfoidl/action-trx-to-junit@v1
-      with:
-        trx-path: './testresults/**/*.trx'
-        output-path: './junit-results'
+      run: reportgenerator -reports:"./testresults/**/*.trx" -targetdir:"./htmlreports" -reporttypes:"Html;HtmlSummary"
     
     - name: Publish test results
       if: always()
       uses: dorny/test-reporter@v1
       with:
         name: C# Test Results
-        path: './junit-results/*.xml'
-        reporter: 'java-junit'
+        path: './testresults/**/*.trx'
+        reporter: 'dotnet-trx'
         fail-on-error: false
     
     - name: Upload test artifacts
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-results
         path: |
           ./testresults/**/*.trx
-          ./junit-results/**/*.xml
+          ./htmlreports/**
         retention-days: 30
     
-    - name: Display test summary
+    - name: Create test summary
       if: always()
       run: |
         echo "## Test Execution Summary" >> $GITHUB_STEP_SUMMARY
-        echo "- Test Framework: xUnit" >> $GITHUB_STEP_SUMMARY
-        echo "- Report Format: TRX & JUnit XML" >> $GITHUB_STEP_SUMMARY
-        echo "- Artifacts stored for 30 days" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Tests completed and reports generated" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Report Details" >> $GITHUB_STEP_SUMMARY
+        echo "- **Framework**: xUnit" >> $GITHUB_STEP_SUMMARY
+        echo "- **Report Formats**: TRX, HTML" >> $GITHUB_STEP_SUMMARY
+        echo "- **Artifacts**: Available for 30 days" >> $GITHUB_STEP_SUMMARY
