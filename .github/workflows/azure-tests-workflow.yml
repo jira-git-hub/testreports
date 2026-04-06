@@ -1,0 +1,65 @@
+name: C# Tests - Generate Reports
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup .NET 6.0
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '6.0.x'
+    
+    - name: Restore dependencies
+      run: dotnet restore
+    
+    - name: Build solution
+      run: dotnet build --no-restore --configuration Release
+    
+    - name: Run tests and generate TRX report
+      run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./testresults
+      continue-on-error: true
+    
+    - name: Convert TRX to JUnit XML
+      if: always()
+      uses: gfoidl/action-trx-to-junit@v1
+      with:
+        trx-path: './testresults/**/*.trx'
+        output-path: './junit-results'
+    
+    - name: Publish test results
+      if: always()
+      uses: dorny/test-reporter@v1
+      with:
+        name: C# Test Results
+        path: './junit-results/*.xml'
+        reporter: 'java-junit'
+        fail-on-error: false
+    
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: |
+          ./testresults/**/*.trx
+          ./junit-results/**/*.xml
+        retention-days: 30
+    
+    - name: Display test summary
+      if: always()
+      run: |
+        echo "## Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- Test Framework: xUnit" >> $GITHUB_STEP_SUMMARY
+        echo "- Report Format: TRX & JUnit XML" >> $GITHUB_STEP_SUMMARY
+        echo "- Artifacts stored for 30 days" >> $GITHUB_STEP_SUMMARY
