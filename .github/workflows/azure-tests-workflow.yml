@@ -106,7 +106,7 @@ jobs:
         PASSED="${{ steps.test-results.outputs.passed }}"
         FAILED="${{ steps.test-results.outputs.failed }}"
         TOTAL="${{ steps.test-results.outputs.total }}"
-        cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+        cat >> $GITHUB_STEP_SUMMARY << EOF
         ## 📊 C# Test Execution Summary
         
         ### Test Statistics
@@ -122,3 +122,87 @@ jobs:
         - **Duration**: 927ms
         - **Artifacts**: Available for 30 days
         EOF
+    
+          - name: Post Test Results to Jira
+          if: always()
+          uses: actions/github-script@v7
+          with:
+        script: |
+          const https = require('https');
+          const passed = '${{ steps.test-results.outputs.passed }}';
+          const failed = '${{ steps.test-results.outputs.failed }}';
+          const total = '${{ steps.test-results.outputs.total }}';
+          const runUrl = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}';
+          const branchName = '${{ github.ref_name }}';
+          
+          // Extract Jira issue key from branch name (e.g., PROJ-123)
+          const jiraKeyMatch = branchName.match(/([A-Z]+-\d+)/);
+          const jiraKey = jiraKeyMatch ? jiraKeyMatch[1] : null;
+          
+          if (!jiraKey) {
+            console.log('No Jira key found in branch name. Skipping Jira update.');
+            return;
+          }
+          
+          const jiraUrl = '${{ secrets.JIRA_BASE_URL }}';
+          const email = '${{ secrets.JIRA_USER_EMAIL }}';
+          const token = '${{ secrets.JIRA_API_TOKEN }}';
+          
+          // Determine build status
+          const buildStatus = failed === '0' ? 'Passed' : 'Failed';
+          
+          // Get custom field IDs (you'll need to replace these)
+          const customFields = {
+            testsPassed: 'customfield_10000',      // Tests Passed
+            testsFailed: 'customfield_10001',      // Tests Failed
+            testsTotal: 'customfield_10002',       // Tests Total
+            buildStatus: 'customfield_10003',      // Build Status
+            testReportLink: 'customfield_10004'    // Test Report Link
+          };
+          
+          const updateData = JSON.stringify({
+            fields: {
+              [customFields.testsPassed]: parseInt(passed),
+              [customFields.testsFailed]: parseInt(failed),
+              [customFields.testsTotal]: parseInt(total),
+              [customFields.buildStatus]: { value: buildStatus },
+              [customFields.testReportLink]: runUrl
+            }
+          });
+          
+          const auth = Buffer.from(`${email}:${token}`).toString('base64');
+          
+          const options = {
+            hostname: new URL(jiraUrl).hostname,
+            path: `/rest/api/3/issue/${jiraKey}`,
+            method: 'PUT',
+            headers: {
+              'Authorization': `Basic ${auth}`,
+              'Content-Type': 'application/json',
+              'Content-Length': updateData.length
+            }
+          };
+          
+          return new Promise((resolve, reject) => {
+            const req = https.request(options, (res) => {
+              let data = '';
+              res.on('data', (chunk) => { data += chunk; });
+              res.on('end', () => {
+                if (res.statusCode === 204 || res.statusCode === 200) {
+                  console.log('✅ Test results updated in Jira issue:', jiraKey);
+                  console.log(`   ✅ Passed: ${passed}`);
+                  console.log(`   ❌ Failed: ${failed}`);
+                  console.log(`   📈 Total: ${total}`);
+                  resolve(data);
+                } else {
+                  console.log(`❌ Failed to update Jira: ${res.statusCode}`);
+                  console.log('Response:', data);
+                  reject(new Error(`HTTP ${res.statusCode}`));
+                }
+              });
+            });
+            
+            req.on('error', reject);
+            req.write(updateData);
+            req.end();
+          });
