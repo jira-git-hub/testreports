@@ -64,7 +64,7 @@ jobs:
         fail-on-error: false
     
     - name: Create PR comment with test results
-      if: ${{ always() && github.event_name == 'pull_request' }}
+      if: always() && github.event_name == 'pull_request'
       uses: actions/github-script@v7
       with:
         script: |
@@ -72,20 +72,7 @@ jobs:
           const failed = '${{ steps.test-results.outputs.failed }}';
           const total = '${{ steps.test-results.outputs.total }}';
           const statusIcon = failed === '0' ? '✅' : '❌';
-          const comment = `
-## ${statusIcon} Test Results Summary
-
-| Metric | Count |
-|--------|-------|
-| **Total Tests** | ${total} |
-| **Passed** ✅ | ${passed} |
-| **Failed** ❌ | ${failed} |
-| **Duration** | 927ms |
-| **Framework** | xUnit |
-
-[View full test report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-`;
-
+          const comment = `## ${statusIcon} Test Results Summary\n\n| Metric | Count |\n|--------|-------|\n| **Total Tests** | ${total} |\n| **Passed** ✅ | ${passed} |\n| **Failed** ❌ | ${failed} |\n| **Duration** | 927ms |\n| **Framework** | xUnit |\n\n[View full test report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n`;
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
@@ -134,141 +121,75 @@ jobs:
       with:
         script: |
           const https = require('https');
-
           const passed = '${{ steps.test-results.outputs.passed }}';
           const failed = '${{ steps.test-results.outputs.failed }}';
           const total = '${{ steps.test-results.outputs.total }}';
-
-          const runUrl = `https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+          const runUrl = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}';
           const branchName = '${{ github.ref_name }}';
           const repoName = '${{ github.repository }}';
           const timestamp = new Date().toISOString().split('T')[0];
-
+          
           const jiraUrl = process.env.JIRA_BASE_URL;
           const email = process.env.JIRA_USER_EMAIL;
           const token = process.env.JIRA_API_TOKEN;
           const projectKey = process.env.JIRA_PROJECT_KEY;
-
+          
           if (!jiraUrl || !email || !token || !projectKey) {
-            console.log('⚠️ Missing Jira secrets.');
+            console.log('⚠️  Missing Jira secrets.');
             return;
           }
-
-          // ✅ ADF DESCRIPTION (Fix for HTTP 400)
-          const descriptionADF = {
-            "type": "doc",
-            "version": 1,
-            "content": [
-              {
-                "type": "heading",
-                "attrs": { "level": 2 },
-                "content": [{ "type": "text", "text": "Test Execution Report" }]
-              },
-              {
-                "type": "paragraph",
-                "content": [{ "type": "text", "text": `Repository: ${repoName}` }]
-              },
-              {
-                "type": "paragraph",
-                "content": [{ "type": "text", "text": `Branch: ${branchName}` }]
-              },
-              {
-                "type": "paragraph",
-                "content": [{ "type": "text", "text": `Date: ${timestamp}` }]
-              },
-              {
-                "type": "table",
-                "content": [
-                  {
-                    "type": "tableRow",
-                    "content": [
-                      { "type": "tableHeader", "content": [{ "type": "text", "text": "Metric" }] },
-                      { "type": "tableHeader", "content": [{ "type": "text", "text": "Count" }] }
-                    ]
-                  },
-                  {
-                    "type": "tableRow",
-                    "content": [
-                      { "type": "tableCell", "content":[{"type":"paragraph","content":[{"type":"text","text":"Passed"}]}]},
-                      { "type": "tableCell", "content":[{"type":"paragraph","content":[{"type":"text","text":passed}]}]}
-                    ]
-                  },
-                  {
-                    "type": "tableRow",
-                    "content": [
-                      { "type": "tableCell", "content":[{"type":"paragraph","content":[{"type":"text","text":"Failed"}]}]},
-                      { "type": "tableCell", "content":[{"type":"paragraph","content":[{"type":"text","text":failed}]}]}
-                    ]
-                  },
-                  {
-                    "type": "tableRow",
-                    "content": [
-                      { "type": "tableCell", "content":[{"type":"paragraph","content":[{"type":"text","text":"Total"}]}]},
-                      { "type": "tableCell", "content":[{"type":"paragraph","content":[{"type":"text","text":total}]}]}
-                    ]
-                  }
-                ]
-              },
-              {
-                "type": "paragraph",
-                "content": [
-                  { "type": "text", "text": "View Full Report: " },
-                  {
-                    "type": "text",
-                    "text": runUrl,
-                    "marks": [{ "type": "link","attrs":{"href": runUrl}}]
-                  }
-                ]
-              }
-            ]
-          };
-
+          
+          // Using ONLY REQUIRED FIELDS - No custom fields needed!
           const issueData = JSON.stringify({
             fields: {
               project: { key: projectKey },
               summary: `[TEST REPORT] ${repoName} - ${timestamp} | ✅ ${passed} Passed | ❌ ${failed} Failed`,
-              description: descriptionADF, 
-              issuetype: { name: "Task" }
+              description: `*Test Execution Report*\n\n*Repository:* ${repoName}\n*Branch:* ${branchName}\n*Date:* ${timestamp}\n\nh3. Test Results\n|| Metric || Count ||\n| Passed | ${passed} |\n| Failed | ${failed} |\n| Total | ${total} |\n\n[View Full Report|${runUrl}]`,
+              issuetype: { name: 'Task' }
             }
           });
-
-          console.log("📤 Creating Jira Issue...");
           
-          const auth = Buffer.from(`${email}:${token}`).toString("base64");
-
+          console.log('📤 Creating Jira Issue (no custom fields needed)...');
+          console.log(`   Project: ${projectKey}`);
+          console.log(`   Summary: Test Report - ${passed}✅ ${failed}❌ ${total}📈`);
+          console.log(`   Repository: ${repoName}`);
+          console.log(`   Branch: ${branchName}`);
+          
+          const auth = Buffer.from(`${email}:${token}`).toString('base64');
           const options = {
             hostname: new URL(jiraUrl).hostname,
-            path: "/rest/api/3/issue",
-            method: "POST",
+            path: '/rest/api/3/issue',
+            method: 'POST',
             headers: {
-              "Authorization": `Basic ${auth}`,
-              "Content-Type": "application/json",
-              "Content-Length": Buffer.byteLength(issueData)
+              'Authorization': `Basic ${auth}`,
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(issueData)
             }
           };
-
+          
           return new Promise((resolve, reject) => {
-            const req = https.request(options, res => {
-              let data = "";
-              res.on("data", chunk => (data += chunk));
-              res.on("end", () => {
+            const req = https.request(options, (res) => {
+              let data = '';
+              res.on('data', (chunk) => { data += chunk; });
+              res.on('end', () => {
                 if (res.statusCode === 201) {
                   const response = JSON.parse(data);
-                  console.log(`✅ Jira Issue Created: ${jiraUrl}/browse/${response.key}`);
+                  console.log('\n✅ SUCCESS! Test report created in Jira');
+                  console.log(`   Issue Key: ${response.key}`);
+                  console.log(`   Issue ID: ${response.id}`);
+                  console.log(`   URL: ${jiraUrl}/browse/${response.key}`);
                   resolve(response);
                 } else {
-                  console.log(`❌ Failed to create Jira issue: HTTP ${res.statusCode}`);
-                  console.log("Response:", data);
+                  console.log(`\n❌ Failed to create Jira issue: HTTP ${res.statusCode}`);
+                  console.log('Response:', data);
                   reject(new Error(`HTTP ${res.statusCode}`));
                 }
               });
             });
-
-            req.on("error", err => {
-              console.log("❌ Request error:", err.message);
+            req.on('error', (err) => {
+              console.log('\n❌ Request error:', err.message);
               reject(err);
             });
-
             req.write(issueData);
             req.end();
           });
