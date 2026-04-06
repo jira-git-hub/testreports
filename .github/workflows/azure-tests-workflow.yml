@@ -7,9 +7,16 @@ on:
     branches: [ main, develop ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     
     steps:
     - name: Checkout code
@@ -26,40 +33,47 @@ jobs:
     - name: Build solution
       run: dotnet build --no-restore --configuration Release
     
-    - name: Run tests and generate TRX report
-      run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./testresults
-      continue-on-error: true
+    - name: Run tests with TRX report
+      run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=TestResults.trx" --results-directory "./TestResults" || true
     
-    - name: Convert TRX to JUnit XML
+    - name: Install ReportGenerator
+      run: dotnet tool install --global dotnet-reportgenerator-globaltool
+    
+    - name: Generate HTML Report
       if: always()
-      uses: gfoidl/action-trx-to-junit@v1
-      with:
-        trx-path: './testresults/**/*.trx'
-        output-path: './junit-results'
+      run: |
+        if [ -d "./TestResults" ]; then
+          reportgenerator -reports:"./TestResults/**/*.trx" -targetdir:"./HtmlReport" -reporttypes:"Html;HtmlSummary" || true
+        fi
     
     - name: Publish test results
       if: always()
       uses: dorny/test-reporter@v1
       with:
         name: C# Test Results
-        path: './junit-results/*.xml'
-        reporter: 'java-junit'
+        path: './TestResults/**/*.trx'
+        reporter: 'dotnet-trx'
         fail-on-error: false
     
     - name: Upload test artifacts
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
-        name: test-results
+        name: test-results-${{ github.run_id }}
         path: |
-          ./testresults/**/*.trx
-          ./junit-results/**/*.xml
+          TestResults/
+          HtmlReport/
         retention-days: 30
     
-    - name: Display test summary
+    - name: Create test summary
       if: always()
       run: |
-        echo "## Test Execution Summary" >> $GITHUB_STEP_SUMMARY
-        echo "- Test Framework: xUnit" >> $GITHUB_STEP_SUMMARY
-        echo "- Report Format: TRX & JUnit XML" >> $GITHUB_STEP_SUMMARY
-        echo "- Artifacts stored for 30 days" >> $GITHUB_STEP_SUMMARY
+        echo "## ✅ Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Framework**: xUnit" >> $GITHUB_STEP_SUMMARY
+        echo "- **Report Formats**: TRX, HTML" >> $GITHUB_STEP_SUMMARY
+        if [ -d "./TestResults" ]; then
+          TEST_COUNT=$(find ./TestResults -name "*.trx" | wc -l)
+          echo "- **Test Files**: $TEST_COUNT" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "- **Artifacts**: Available for 30 days" >> $GITHUB_STEP_SUMMARY
