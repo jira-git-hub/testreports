@@ -37,16 +37,6 @@ jobs:
     - name: Run tests with TRX report
       run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=TestResults.trx" --results-directory "./TestResults" || true
     
-    - name: Install ReportGenerator
-      run: dotnet tool install --global dotnet-reportgenerator-globaltool
-    
-    - name: Generate HTML Report
-      if: always()
-      run: |
-        if [ -d "./TestResults" ]; then
-          reportgenerator -reports:"./TestResults/**/*.trx" -targetdir:"./HtmlReport" -reporttypes:"Html;HtmlSummary" || true
-        fi
-    
     - name: Parse test results
       if: always()
       id: test-results
@@ -69,15 +59,15 @@ jobs:
       uses: dorny/test-reporter@v1
       with:
         name: C# Test Results
-        path: './TestResults/**/*.trx'
-        reporter: 'dotnet-trx'
+        path: TestResults/TestResults.trx
+        reporter: dotnet-trx
         fail-on-error: false
     
     - name: Create PR comment with test results
       if: always() && github.event_name == 'pull_request'
       uses: actions/github-script@v7
       with:
-        script: >
+        script: |
           const passed = '${{ steps.test-results.outputs.passed }}';
           const failed = '${{ steps.test-results.outputs.failed }}';
           const total = '${{ steps.test-results.outputs.total }}';
@@ -95,12 +85,10 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: test-results-${{ github.run_id }}
-        path: |
-          TestResults/
-          HtmlReport/
+        path: TestResults/
         retention-days: 30
     
-    - name: Create comprehensive test summary
+    - name: Create test summary
       if: always()
       run: |
         PASSED="${{ steps.test-results.outputs.passed }}"
@@ -118,15 +106,14 @@ jobs:
         
         ### Details
         - **Framework**: xUnit
-        - **Report Formats**: TRX, HTML
+        - **Report**: Available in artifacts
         - **Duration**: 927ms
-        - **Artifacts**: Available for 30 days
         EOF
     
-          - name: Post Test Results to Jira
-          if: always()
-          uses: actions/github-script@v7
-          with:
+    - name: Create Jira Test Report Issue
+      if: always()
+      uses: actions/github-script@v7
+      with:
         script: |
           const https = require('https');
           const passed = '${{ steps.test-results.outputs.passed }}';
@@ -134,39 +121,49 @@ jobs:
           const total = '${{ steps.test-results.outputs.total }}';
           const runUrl = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}';
           const branchName = '${{ github.ref_name }}';
-          
-          // Extract Jira issue key from branch name (e.g., PROJ-123)
-          const jiraKeyMatch = branchName.match(/([A-Z]+-\d+)/);
-          const jiraKey = jiraKeyMatch ? jiraKeyMatch[1] : null;
-          
-          if (!jiraKey) {
-            console.log('No Jira key found in branch name. Skipping Jira update.');
-            return;
-          }
+          const repoName = '${{ github.repository }}';
+          const timestamp = new Date().toISOString().split('T')[0];
           
           const jiraUrl = '${{ secrets.JIRA_BASE_URL }}';
           const email = '${{ secrets.JIRA_USER_EMAIL }}';
           const token = '${{ secrets.JIRA_API_TOKEN }}';
+          const projectKey = '${{ secrets.JIRA_PROJECT_KEY }}';
           
-          // Determine build status
+          if (!jiraUrl || !email || !token || !projectKey) {
+            console.log('⚠️  Missing Jira secrets. Configure:');
+            console.log('   - JIRA_BASE_URL');
+            console.log('   - JIRA_USER_EMAIL');
+            console.log('   - JIRA_API_TOKEN');
+            console.log('   - JIRA_PROJECT_KEY');
+            return;
+          }
+          
           const buildStatus = failed === '0' ? 'Passed' : 'Failed';
           
-          // Get custom field IDs (you'll need to replace these)
+          // Custom field IDs - REPLACE with your field IDs
           const customFields = {
-            testsPassed: 'customfield_10000',      // Tests Passed
-            testsFailed: 'customfield_10001',      // Tests Failed
-            testsTotal: 'customfield_10002',       // Tests Total
-            buildStatus: 'customfield_10003',      // Build Status
-            testReportLink: 'customfield_10004'    // Test Report Link
+            testsPassed: 'customfield_10000',
+            testsFailed: 'customfield_10001',
+            testsTotal: 'customfield_10002',
+            buildStatus: 'customfield_10003',
+            testReportLink: 'customfield_10004',
+            repository: 'customfield_10005',
+            branchName: 'customfield_10006'
           };
           
-          const updateData = JSON.stringify({
+          const issueData = JSON.stringify({
             fields: {
+              project: { key: projectKey },
+              summary: `Test Report - ${repoName} - ${timestamp}`,
+              description: `Test execution report for ${repoName} on branch ${branchName}\n\nFramework: xUnit\nReport: ${runUrl}`,
+              issuetype: { name: 'Task' },
               [customFields.testsPassed]: parseInt(passed),
               [customFields.testsFailed]: parseInt(failed),
               [customFields.testsTotal]: parseInt(total),
               [customFields.buildStatus]: { value: buildStatus },
-              [customFields.testReportLink]: runUrl
+              [customFields.testReportLink]: runUrl,
+              [customFields.repository]: repoName,
+              [customFields.branchName]: branchName
             }
           });
           
@@ -174,12 +171,12 @@ jobs:
           
           const options = {
             hostname: new URL(jiraUrl).hostname,
-            path: `/rest/api/3/issue/${jiraKey}`,
-            method: 'PUT',
+            path: '/rest/api/3/issue',
+            method: 'POST',
             headers: {
               'Authorization': `Basic ${auth}`,
               'Content-Type': 'application/json',
-              'Content-Length': updateData.length
+              'Content-Length': issueData.length
             }
           };
           
@@ -188,14 +185,14 @@ jobs:
               let data = '';
               res.on('data', (chunk) => { data += chunk; });
               res.on('end', () => {
-                if (res.statusCode === 204 || res.statusCode === 200) {
-                  console.log('✅ Test results updated in Jira issue:', jiraKey);
-                  console.log(`   ✅ Passed: ${passed}`);
-                  console.log(`   ❌ Failed: ${failed}`);
-                  console.log(`   📈 Total: ${total}`);
+                if (res.statusCode === 201) {
+                  const response = JSON.parse(data);
+                  console.log('✅ Test report created in Jira');
+                  console.log(`   Issue: ${response.key}`);
+                  console.log(`   ✅ Passed: ${passed} | ❌ Failed: ${failed} | 📈 Total: ${total}`);
                   resolve(data);
                 } else {
-                  console.log(`❌ Failed to update Jira: ${res.statusCode}`);
+                  console.log(`❌ Failed to create Jira issue: ${res.statusCode}`);
                   console.log('Response:', data);
                   reject(new Error(`HTTP ${res.statusCode}`));
                 }
@@ -203,6 +200,6 @@ jobs:
             });
             
             req.on('error', reject);
-            req.write(updateData);
+            req.write(issueData);
             req.end();
           });
