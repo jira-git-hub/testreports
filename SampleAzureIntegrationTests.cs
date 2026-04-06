@@ -29,7 +29,7 @@ namespace YourProject.Tests
         public void Test_StringValidation_Failure()
         {
             // Arrange
-            string input = null;
+            string? input = null;
             
             // Act
             bool isValid = !string.IsNullOrWhiteSpace(input);
@@ -204,15 +204,15 @@ namespace YourProject.Tests
         {
             return !string.IsNullOrEmpty(resourceGroup.Name) &&
                    !string.IsNullOrEmpty(resourceGroup.Location) &&
-                   resourceGroup.Tags != null;          
+                   resourceGroup.Tags != null;
         }
     }
 
     // Model Classes
     public class ResourceGroupModel
     {
-        public string Name { get; set; }
-        public string Location { get; set; }
-        public Dictionary<string, string> Tags { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Location { get; set; } = string.Empty;
+        public Dictionary<string, string> Tags { get; set; } = new();
     }
 }
