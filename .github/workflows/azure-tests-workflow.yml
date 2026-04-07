@@ -1,4 +1,4 @@
-name: C# Tests - Generate Reports
+name: C# Tests - Dashboard Only
 
 on:
   push:
@@ -8,10 +8,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  checks: write
-  pull-requests: write
-  statuses: write
+  contents: write        # ✅ Required for GitHub Pages
+  pages: write
+  id-token: write
 
 jobs:
   test:
@@ -45,151 +44,50 @@ jobs:
           PASSED=$(grep -o 'outcome="Passed"' ./TestResults/TestResults.trx | wc -l)
           FAILED=$(grep -o 'outcome="Failed"' ./TestResults/TestResults.trx | wc -l)
           TOTAL=$((PASSED + FAILED))
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "total=$TOTAL" >> $GITHUB_OUTPUT
         else
-          echo "passed=0" >> $GITHUB_OUTPUT
-          echo "failed=0" >> $GITHUB_OUTPUT
-          echo "total=0" >> $GITHUB_OUTPUT
+          PASSED=0
+          FAILED=0
+          TOTAL=0
         fi
+
+        echo "passed=$PASSED" >> $GITHUB_OUTPUT
+        echo "failed=$FAILED" >> $GITHUB_OUTPUT
+        echo "total=$TOTAL" >> $GITHUB_OUTPUT
     
-    - name: Publish test results
+    - name: Export JSON for Jira Dashboard
       if: always()
-      uses: dorny/test-reporter@v1
-      with:
-        name: C# Test Results
-        path: TestResults/TestResults.trx
-        reporter: dotnet-trx
-        fail-on-error: false
+      run: |
+        mkdir -p dashboard
+
+        PASSED="${{ steps.test-results.outputs.passed }}"
+        FAILED="${{ steps.test-results.outputs.failed }}"
+        TOTAL="${{ steps.test-results.outputs.total }}"
+        RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+        cat > dashboard/dashboard-report.json << EOF
+        {
+          "repository": "${{ github.repository }}",
+          "branch": "${{ github.ref_name }}",
+          "passed": $PASSED,
+          "failed": $FAILED,
+          "total": $TOTAL,
+          "timestamp": "$TIMESTAMP",
+          "report_url": "$RUN_URL"
+        }
+        EOF
     
-    - name: Create PR comment with test results
-      if: always() && github.event_name == 'pull_request'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const passed = '${{ steps.test-results.outputs.passed }}';
-          const failed = '${{ steps.test-results.outputs.failed }}';
-          const total = '${{ steps.test-results.outputs.total }}';
-          const statusIcon = failed === '0' ? '✅' : '❌';
-          const comment = `## ${statusIcon} Test Results Summary\n\n| Metric | Count |\n|--------|-------|\n| **Total Tests** | ${total} |\n| **Passed** ✅ | ${passed} |\n| **Failed** ❌ | ${failed} |\n| **Duration** | 927ms |\n| **Framework** | xUnit |\n\n[View full test report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n`;
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
-    
-    - name: Upload test artifacts
+    - name: Upload test artifacts (optional)
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: test-results-${{ github.run_id }}
         path: TestResults/
-        retention-days: 30
-    
-    - name: Create test summary
-      if: always()
-      run: |
-        PASSED="${{ steps.test-results.outputs.passed }}"
-        FAILED="${{ steps.test-results.outputs.failed }}"
-        TOTAL="${{ steps.test-results.outputs.total }}"
-        cat >> $GITHUB_STEP_SUMMARY << EOF
-        ## 📊 C# Test Execution Summary
-        
-        ### Test Statistics
-        | Status | Count |
-        |--------|-------|
-        | ✅ Passed | $PASSED |
-        | ❌ Failed | $FAILED |
-        | 📈 Total | $TOTAL |
-        
-        ### Details
-        - **Framework**: xUnit
-        - **Report**: Available in artifacts
-        - **Duration**: 927ms
-        EOF
-    
-    - name: Create Jira Test Report Issue
-      if: always()
-      uses: actions/github-script@v7
-      env:
-        JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-        JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-        JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-        JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+        retention-days: 7
+
+    - name: Deploy Dashboard JSON to GitHub Pages
+      uses: JamesIves/github-pages-deploy-action@v4
       with:
-        script: |
-          const https = require('https');
-          const passed = '${{ steps.test-results.outputs.passed }}';
-          const failed = '${{ steps.test-results.outputs.failed }}';
-          const total = '${{ steps.test-results.outputs.total }}';
-          const runUrl = 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}';
-          const branchName = '${{ github.ref_name }}';
-          const repoName = '${{ github.repository }}';
-          const timestamp = new Date().toISOString().split('T')[0];
-          
-          const jiraUrl = process.env.JIRA_BASE_URL;
-          const email = process.env.JIRA_USER_EMAIL;
-          const token = process.env.JIRA_API_TOKEN;
-          const projectKey = process.env.JIRA_PROJECT_KEY;
-          
-          if (!jiraUrl || !email || !token || !projectKey) {
-            console.log('⚠️  Missing Jira secrets.');
-            return;
-          }
-          
-          // Using ONLY REQUIRED FIELDS - No custom fields needed!
-          const issueData = JSON.stringify({
-            fields: {
-              project: { key: projectKey },
-              summary: `[TEST REPORT] ${repoName} - ${timestamp} | ✅ ${passed} Passed | ❌ ${failed} Failed`,
-              description: `*Test Execution Report*\n\n*Repository:* ${repoName}\n*Branch:* ${branchName}\n*Date:* ${timestamp}\n\nh3. Test Results\n|| Metric || Count ||\n| Passed | ${passed} |\n| Failed | ${failed} |\n| Total | ${total} |\n\n[View Full Report|${runUrl}]`,
-              issuetype: { name: 'Task' }
-            }
-          });
-          
-          console.log('📤 Creating Jira Issue (no custom fields needed)...');
-          console.log(`   Project: ${projectKey}`);
-          console.log(`   Summary: Test Report - ${passed}✅ ${failed}❌ ${total}📈`);
-          console.log(`   Repository: ${repoName}`);
-          console.log(`   Branch: ${branchName}`);
-          
-          const auth = Buffer.from(`${email}:${token}`).toString('base64');
-          const options = {
-            hostname: new URL(jiraUrl).hostname,
-            path: '/rest/api/3/issue',
-            method: 'POST',
-            headers: {
-              'Authorization': `Basic ${auth}`,
-              'Content-Type': 'application/json',
-              'Content-Length': Buffer.byteLength(issueData)
-            }
-          };
-          
-          return new Promise((resolve, reject) => {
-            const req = https.request(options, (res) => {
-              let data = '';
-              res.on('data', (chunk) => { data += chunk; });
-              res.on('end', () => {
-                if (res.statusCode === 201) {
-                  const response = JSON.parse(data);
-                  console.log('\n✅ SUCCESS! Test report created in Jira');
-                  console.log(`   Issue Key: ${response.key}`);
-                  console.log(`   Issue ID: ${response.id}`);
-                  console.log(`   URL: ${jiraUrl}/browse/${response.key}`);
-                  resolve(response);
-                } else {
-                  console.log(`\n❌ Failed to create Jira issue: HTTP ${res.statusCode}`);
-                  console.log('Response:', data);
-                  reject(new Error(`HTTP ${res.statusCode}`));
-                }
-              });
-            });
-            req.on('error', (err) => {
-              console.log('\n❌ Request error:', err.message);
-              reject(err);
-            });
-            req.write(issueData);
-            req.end();
-          });
+        folder: dashboard
+        branch: gh-pages
+        clean: false
