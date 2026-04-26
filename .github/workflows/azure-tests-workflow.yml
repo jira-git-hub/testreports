@@ -75,9 +75,11 @@ jobs:
         fi
 
         echo "✅ Uploading JUnit results to Xray Cloud..."
-
+       
         curl -i -X POST \
           -H "Authorization: Bearer $XRAY_TOKEN" \
+          -H "Content-Type: text/xml" \
           -H "Accept: application/json" \
-          -F "file=@./TestResults/junit-results.xml" \
+          --data-binary @./TestResults/junit-results.xml \
           "https://xray.cloud.getxray.app/api/v2/import/execution/junit?projectKey=JIRAG9&environment=CI"
+
