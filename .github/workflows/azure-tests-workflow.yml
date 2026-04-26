@@ -81,5 +81,5 @@ jobs:
           -H "Content-Type: text/xml" \
           -H "Accept: application/json" \
           --data-binary @./TestResults/junit-results.xml \
-          "https://xray.cloud.getxray.app/api/v2/import/execution/junit?projectKey=JIRAG9&environment=CI"
+          "https://xray.cloud.getxray.app/api/v2/import/execution/junit?projectKey=GITHUB&environment=CI"
 
