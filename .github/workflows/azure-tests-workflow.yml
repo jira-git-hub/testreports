@@ -1,4 +1,4 @@
-name: C# Tests - Generate Reports
+name: C# Tests - Xray Cloud Integration
 
 on:
   push:
@@ -7,118 +7,77 @@ on:
     branches: [ main, develop ]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  checks: write
-  pull-requests: write
-  statuses: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    
+
     steps:
+    # --------------------------------------------------
+    # Checkout & Setup
+    # --------------------------------------------------
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Setup .NET 6.0
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '6.0.x'
-    
+
     - name: Restore dependencies
       run: dotnet restore
-    
+
     - name: Build solution
-      run: dotnet build --no-restore --configuration Release
-    
-    - name: Run tests with TRX report
-      run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=TestResults.trx" --results-directory "./TestResults" || true
-    
-    - name: Install ReportGenerator
-      run: dotnet tool install --global dotnet-reportgenerator-globaltool
-    
-    - name: Generate HTML Report
-      if: always()
+      run: dotnet build --configuration Release
+
+    # --------------------------------------------------
+    # Run xUnit tests and generate JUnit XML
+    # --------------------------------------------------
+    - name: Run tests with JUnit report
       run: |
-        if [ -d "./TestResults" ]; then
-          reportgenerator -reports:"./TestResults/**/*.trx" -targetdir:"./HtmlReport" -reporttypes:"Html;HtmlSummary" || true
+        mkdir -p TestResults
+        dotnet test \
+          --no-build \
+          --configuration Release \
+          --logger "junit;LogFilePath=./TestResults/junit-results.xml" \
+          || true
+
+    # --------------------------------------------------
+    # Upload results to Xray Cloud
+    # --------------------------------------------------
+    - name: Upload test results to Xray Cloud
+      if: always()
+      env:
+        XRAY_CLIENT_ID: ${{ secrets.XRAY_CLIENT_ID }}
+        XRAY_CLIENT_SECRET: ${{ secrets.XRAY_CLIENT_SECRET }}
+      run: |
+        echo "Authenticating with Xray Cloud..."
+
+        AUTH_RESPONSE=$(curl -s -X POST \
+          -H "Content-Type: application/json" \
+          https://xray.cloud.getxray.app/api/v1/authenticate \
+          -d '{
+            "client_id": "'"$XRAY_CLIENT_ID"'",
+            "client_secret": "'"$XRAY_CLIENT_SECRET"'"
+          }')
+
+        XRAY_TOKEN=$(echo "$AUTH_RESPONSE" | tr -d '"')
+
+        if [ -z "$XRAY_TOKEN" ]; then
+          echo "❌ Xray authentication failed"
+          exit 1
         fi
-    
-    - name: Parse test results
-      if: always()
-      id: test-results
-      run: |
-        if [ -f "./TestResults/TestResults.trx" ]; then
-          PASSED=$(grep -o 'outcome="Passed"' ./TestResults/TestResults.trx | wc -l)
-          FAILED=$(grep -o 'outcome="Failed"' ./TestResults/TestResults.trx | wc -l)
-          TOTAL=$((PASSED + FAILED))
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "total=$TOTAL" >> $GITHUB_OUTPUT
-        else
-          echo "passed=0" >> $GITHUB_OUTPUT
-          echo "failed=0" >> $GITHUB_OUTPUT
-          echo "total=0" >> $GITHUB_OUTPUT
+
+        echo "✅ Authentication successful"
+
+        if [ ! -f "./TestResults/junit-results.xml" ]; then
+          echo "❌ JUnit results file not found. Skipping Xray upload."
+          exit 0
         fi
-    
-    - name: Publish test results
-      if: always()
-      uses: dorny/test-reporter@v1
-      with:
-        name: C# Test Results
-        path: './TestResults/**/*.trx'
-        reporter: 'dotnet-trx'
-        fail-on-error: false
-    
-    - name: Create PR comment with test results
-      if: always() && github.event_name == 'pull_request'
-      uses: actions/github-script@v7
-      with:
-        script: >
-          const passed = '${{ steps.test-results.outputs.passed }}';
-          const failed = '${{ steps.test-results.outputs.failed }}';
-          const total = '${{ steps.test-results.outputs.total }}';
-          const statusIcon = failed === '0' ? '✅' : '❌';
-          const comment = `## ${statusIcon} Test Results Summary\n\n| Metric | Count |\n|--------|-------|\n| **Total Tests** | ${total} |\n| **Passed** ✅ | ${passed} |\n| **Failed** ❌ | ${failed} |\n| **Duration** | 927ms |\n| **Framework** | xUnit |\n\n[View full test report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n`;
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
-    
-    - name: Upload test artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results-${{ github.run_id }}
-        path: |
-          TestResults/
-          HtmlReport/
-        retention-days: 30
-    
-    - name: Create comprehensive test summary
-      if: always()
-      run: |
-        PASSED="${{ steps.test-results.outputs.passed }}"
-        FAILED="${{ steps.test-results.outputs.failed }}"
-        TOTAL="${{ steps.test-results.outputs.total }}"
-        cat >> $GITHUB_STEP_SUMMARY << EOF
-        ## 📊 C# Test Execution Summary
-        
-        ### Test Statistics
-        | Status | Count |
-        |--------|-------|
-        | ✅ Passed | $PASSED |
-        | ❌ Failed | $FAILED |
-        | 📈 Total | $TOTAL |
-        
-        ### Details
-        - **Framework**: xUnit
-        - **Report Formats**: TRX, HTML
-        - **Duration**: 927ms
-        - **Artifacts**: Available for 30 days
-        EOF
+
+        echo "✅ Uploading JUnit results to Xray Cloud..."
+
+        curl -i -X POST \
+          -H "Authorization: Bearer $XRAY_TOKEN" \
+          -H "Accept: application/json" \
+          -F "file=@./TestResults/junit-results.xml" \
+          "https://xray.cloud.getxray.app/api/v2/import/execution/junit?projectKey=JIRAG9&environment=CI"
