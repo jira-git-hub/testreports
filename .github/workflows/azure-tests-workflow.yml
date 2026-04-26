@@ -1,4 +1,4 @@
-name: C# Tests - Dashboard + Xray Integration
+name: C# Tests - Xray Integration
 
 on:
   push:
@@ -7,21 +7,14 @@ on:
     branches: [ main, develop ]
   workflow_dispatch:
 
-permissions:
-  contents: write        # ✅ Required for GitHub Pages
-  pages: write
-  id-token: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
-    # ------------------------------------------------------------------
-    # Checkout & Build
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
+    # Checkout & Setup
+    # --------------------------------------------------
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -34,19 +27,17 @@ jobs:
       run: dotnet restore
 
     - name: Build solution
-      run: dotnet build --no-restore --configuration Release
+      run: dotnet build --configuration Release
 
-    # ------------------------------------------------------------------
-    # Test Execution (TRX)
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
+    # Run Tests (TRX generation)
+    # --------------------------------------------------
     - name: Run tests with TRX report
-      run: dotnet test --no-build --configuration Release \
-           --logger "trx;LogFileName=TestResults.trx" \
-           --results-directory "./TestResults" || true
+      run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=TestResults.trx" --results-directory ./TestResults || true
 
-    # ------------------------------------------------------------------
-    # Upload to Xray Cloud
-    # ------------------------------------------------------------------
+    # --------------------------------------------------
+    # Upload results to Xray Cloud
+    # --------------------------------------------------
     - name: Upload test results to Xray Cloud
       if: always()
       env:
@@ -89,70 +80,3 @@ jobs:
           -H "Content-Type: application/xml" \
           "https://xray.cloud.getxray.app/api/v2/import/execution/vstest?projectKey=XSP&environment=CI" \
           --data-binary @"$TRX_FILE"
-
-    # ------------------------------------------------------------------
-    # Parse test results (Dashboard)
-    # ------------------------------------------------------------------
-    - name: Parse test results
-      if: always()
-      id: test-results
-      run: |
-        TRX_FILE=$(find ./TestResults -name "*.trx" | head -n 1)
-
-        if [ -f "$TRX_FILE" ]; then
-          PASSED=$(grep -o 'outcome="Passed"' "$TRX_FILE" | wc -l)
-          FAILED=$(grep -o 'outcome="Failed"' "$TRX_FILE" | wc -l)
-          TOTAL=$((PASSED + FAILED))
-        else
-          PASSED=0
-          FAILED=0
-          TOTAL=0
-        fi
-
-        echo "passed=$PASSED" >> $GITHUB_OUTPUT
-        echo "failed=$FAILED" >> $GITHUB_OUTPUT
-        echo "total=$TOTAL" >> $GITHUB_OUTPUT
-
-    # ------------------------------------------------------------------
-    # Dashboard JSON (for Jira / GitHub Pages)
-    # ------------------------------------------------------------------
-    - name: Export JSON for Jira Dashboard
-      if: always()
-      run: |
-        mkdir -p dashboard
-
-        PASSED="${{ steps.test-results.outputs.passed }}"
-        FAILED="${{ steps.test-results.outputs.failed }}"
-        TOTAL="${{ steps.test-results.outputs.total }}"
-        RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-        TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-        cat > dashboard/dashboard-report.json << EOF
-        {
-          "repository": "${{ github.repository }}",
-          "branch": "${{ github.ref_name }}",
-          "passed": $PASSED,
-          "failed": $FAILED,
-          "total": $TOTAL,
-          "timestamp": "$TIMESTAMP",
-          "report_url": "$RUN_URL"
-        }
-        EOF
-
-    # ------------------------------------------------------------------
-    # Artifacts & Pages
-    # ------------------------------------------------------------------
-    - name: Upload test artifacts
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results-${{ github.run_id }}
-        path: TestResults/
-        retention-days: 7
-
-    - name: Deploy Dashboard JSON to GitHub Pages
-      uses: JamesIves/github-pages-deploy-action@v4
-      with:
-        folder: dashboard
-        branch: gh-pages
-        clean: false
