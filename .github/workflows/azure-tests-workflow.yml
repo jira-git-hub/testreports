@@ -1,4 +1,4 @@
-name: C# Tests - Dashboard Only
+name: C# Tests - Dashboard + Xray Integration
 
 on:
   push:
@@ -17,25 +17,70 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    
+
     steps:
+    # ------------------------------------------------------------------
+    # Checkout & Build
+    # ------------------------------------------------------------------
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Setup .NET 6.0
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '6.0.x'
-    
+
     - name: Restore dependencies
       run: dotnet restore
-    
+
     - name: Build solution
       run: dotnet build --no-restore --configuration Release
-    
+
+    # ------------------------------------------------------------------
+    # Test Execution (TRX)
+    # ------------------------------------------------------------------
     - name: Run tests with TRX report
-      run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=TestResults.trx" --results-directory "./TestResults" || true
-    
+      run: dotnet test --no-build --configuration Release \
+           --logger "trx;LogFileName=TestResults.trx" \
+           --results-directory "./TestResults" || true
+
+    # ------------------------------------------------------------------
+    # Upload to Xray Cloud
+    # ------------------------------------------------------------------
+    - name: Upload test results to Xray Cloud
+      if: always()
+      env:
+        XRAY_CLIENT_ID: ${{ secrets.XRAY_CLIENT_ID }}
+        XRAY_CLIENT_SECRET: ${{ secrets.XRAY_CLIENT_SECRET }}
+      run: |
+        echo "Authenticating with Xray Cloud..."
+
+        AUTH_RESPONSE=$(curl -s -X POST \
+          -H "Content-Type: application/json" \
+          https://xray.cloud.getxray.app/api/v2/authenticate \
+          -d '{
+            "client_id": "'"$XRAY_CLIENT_ID"'",
+            "client_secret": "'"$XRAY_CLIENT_SECRET"'"
+          }')
+
+        XRAY_TOKEN=$(echo $AUTH_RESPONSE | tr -d '"')
+
+        if [ -z "$XRAY_TOKEN" ]; then
+          echo "❌ Xray authentication failed"
+          exit 1
+        fi
+
+        echo "✅ Authentication successful – uploading TRX results..."
+
+        curl -X POST \
+          -H "Authorization: Bearer $XRAY_TOKEN" \
+          -H "Content-Type: application/xml" \
+          "https://xray.cloud.getxray.app/api/v2/import/execution/vstest?projectKey=XSP&environment=CI" \
+          --data-binary @TestResults/TestResults.trx
+
+    # ------------------------------------------------------------------
+    # Parse test results (Dashboard)
+    # ------------------------------------------------------------------
     - name: Parse test results
       if: always()
       id: test-results
@@ -53,7 +98,10 @@ jobs:
         echo "passed=$PASSED" >> $GITHUB_OUTPUT
         echo "failed=$FAILED" >> $GITHUB_OUTPUT
         echo "total=$TOTAL" >> $GITHUB_OUTPUT
-    
+
+    # ------------------------------------------------------------------
+    # Dashboard JSON (for Jira / GitHub Pages)
+    # ------------------------------------------------------------------
     - name: Export JSON for Jira Dashboard
       if: always()
       run: |
@@ -76,8 +124,11 @@ jobs:
           "report_url": "$RUN_URL"
         }
         EOF
-    
-    - name: Upload test artifacts (optional)
+
+    # ------------------------------------------------------------------
+    # Artifacts & Pages
+    # ------------------------------------------------------------------
+    - name: Upload test artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
