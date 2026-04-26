@@ -1,9 +1,9 @@
 {
   "repository": "jira-git-hub/testreports",
   "branch": "feature/testreport2",
-  "passed": 15,
+  "passed": 0,
   "failed": 0,
-  "total": 15,
-  "timestamp": "2026-04-07T08:37:05Z",
-  "report_url": "https://github.com/jira-git-hub/testreports/actions/runs/24068217551"
+  "total": 0,
+  "timestamp": "2026-04-26T17:56:59Z",
+  "report_url": "https://github.com/jira-git-hub/testreports/actions/runs/24963243744"
 }
