@@ -63,20 +63,32 @@ jobs:
             "client_secret": "'"$XRAY_CLIENT_SECRET"'"
           }')
 
-        XRAY_TOKEN=$(echo $AUTH_RESPONSE | tr -d '"')
+        XRAY_TOKEN=$(echo "$AUTH_RESPONSE" | tr -d '"')
 
         if [ -z "$XRAY_TOKEN" ]; then
           echo "❌ Xray authentication failed"
           exit 1
         fi
 
-        echo "✅ Authentication successful – uploading TRX results..."
+        echo "✅ Authentication successful"
+
+        echo "Searching for TRX file..."
+        find ./TestResults -name "*.trx" || true
+
+        TRX_FILE=$(find ./TestResults -name "*.trx" | head -n 1)
+
+        if [ -z "$TRX_FILE" ]; then
+          echo "❌ No TRX file found. Skipping Xray upload."
+          exit 0
+        fi
+
+        echo "✅ Uploading TRX file: $TRX_FILE"
 
         curl -X POST \
           -H "Authorization: Bearer $XRAY_TOKEN" \
           -H "Content-Type: application/xml" \
           "https://xray.cloud.getxray.app/api/v2/import/execution/vstest?projectKey=XSP&environment=CI" \
-          --data-binary @TestResults/TestResults.trx
+          --data-binary @"$TRX_FILE"
 
     # ------------------------------------------------------------------
     # Parse test results (Dashboard)
@@ -85,9 +97,11 @@ jobs:
       if: always()
       id: test-results
       run: |
-        if [ -f "./TestResults/TestResults.trx" ]; then
-          PASSED=$(grep -o 'outcome="Passed"' ./TestResults/TestResults.trx | wc -l)
-          FAILED=$(grep -o 'outcome="Failed"' ./TestResults/TestResults.trx | wc -l)
+        TRX_FILE=$(find ./TestResults -name "*.trx" | head -n 1)
+
+        if [ -f "$TRX_FILE" ]; then
+          PASSED=$(grep -o 'outcome="Passed"' "$TRX_FILE" | wc -l)
+          FAILED=$(grep -o 'outcome="Failed"' "$TRX_FILE" | wc -l)
           TOTAL=$((PASSED + FAILED))
         else
           PASSED=0
