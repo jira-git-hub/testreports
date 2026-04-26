@@ -1,4 +1,4 @@
-name: C# Tests - Xray Integration
+name: C# Tests - Xray Cloud Integration
 
 on:
   push:
@@ -30,10 +30,16 @@ jobs:
       run: dotnet build --configuration Release
 
     # --------------------------------------------------
-    # Run Tests (TRX generation)
+    # Run xUnit tests and generate JUnit XML
     # --------------------------------------------------
-    - name: Run tests with TRX report
-      run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=TestResults.trx" --results-directory ./TestResults || true
+    - name: Run tests with JUnit report
+      run: |
+        mkdir -p TestResults
+        dotnet test \
+          --no-build \
+          --configuration Release \
+          --logger "junit;LogFilePath=./TestResults/junit-results.xml" \
+          || true
 
     # --------------------------------------------------
     # Upload results to Xray Cloud
@@ -48,7 +54,7 @@ jobs:
 
         AUTH_RESPONSE=$(curl -s -X POST \
           -H "Content-Type: application/json" \
-          https://xray.cloud.getxray.app/api/v2/authenticate \
+          https://xray.cloud.getxray.app/api/v1/authenticate \
           -d '{
             "client_id": "'"$XRAY_CLIENT_ID"'",
             "client_secret": "'"$XRAY_CLIENT_SECRET"'"
@@ -63,20 +69,15 @@ jobs:
 
         echo "✅ Authentication successful"
 
-        echo "Searching for TRX file..."
-        find ./TestResults -name "*.trx" || true
-
-        TRX_FILE=$(find ./TestResults -name "*.trx" | head -n 1)
-
-        if [ -z "$TRX_FILE" ]; then
-          echo "❌ No TRX file found. Skipping Xray upload."
+        if [ ! -f "./TestResults/junit-results.xml" ]; then
+          echo "❌ JUnit results file not found. Skipping Xray upload."
           exit 0
         fi
 
-        echo "✅ Uploading TRX file: $TRX_FILE"
+        echo "✅ Uploading JUnit results to Xray Cloud..."
 
-        curl -X POST \
+        curl -i -X POST \
           -H "Authorization: Bearer $XRAY_TOKEN" \
           -H "Accept: application/json" \
-          -F "file=@${TRX_FILE}" \
-          "https://xray.cloud.getxray.app/api/v2/import/execution/vstest?projectKey=JIRAG9&environment=CI"
+          -F "file=@./TestResults/junit-results.xml" \
+          "https://xray.cloud.getxray.app/api/v2/import/execution/junit?projectKey=JIRAG9&environment=CI"
